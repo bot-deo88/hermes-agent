@@ -329,7 +329,10 @@ class KawaiiSpinner:
         if self.thread:
             self.thread.join(timeout=0.5)
 
-        is_tty = hasattr(self._out, 'isatty') and self._out.isatty()
+        try:
+            is_tty = hasattr(self._out, 'isatty') and self._out.isatty()
+        except (ValueError, OSError):
+            is_tty = False
         if is_tty:
             # Clear the spinner line with spaces instead of \033[K to avoid
             # garbled escape codes when prompt_toolkit's patch_stdout is active.
