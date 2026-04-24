@@ -100,22 +100,37 @@ def _get_service_pids() -> set:
     # --- launchd (macOS) ---
     if is_macos():
         try:
+            import re
+
             label = get_launchd_label()
             result = subprocess.run(
                 ["launchctl", "list", label],
                 capture_output=True, text=True, timeout=5,
             )
             if result.returncode == 0:
-                # Output: "PID\tStatus\tLabel" header, then one data line
-                for line in result.stdout.strip().splitlines():
-                    parts = line.split()
-                    if len(parts) >= 3 and parts[2] == label:
-                        try:
-                            pid = int(parts[0])
-                            if pid > 0:
-                                pids.add(pid)
-                        except ValueError:
-                            pass
+                stdout = result.stdout.strip()
+
+                # Modern macOS returns a plist-like dictionary for
+                # `launchctl list <label>`:
+                #   "PID" = 1594;
+                # Older versions may still return the tabular
+                #   PID  Status  Label
+                # format. Support both so status detection stays stable.
+                plist_match = re.search(r'"PID"\s*=\s*(\d+);', stdout)
+                if plist_match:
+                    pid = int(plist_match.group(1))
+                    if pid > 0:
+                        pids.add(pid)
+                else:
+                    for line in stdout.splitlines():
+                        parts = line.split()
+                        if len(parts) >= 3 and parts[2] == label:
+                            try:
+                                pid = int(parts[0])
+                                if pid > 0:
+                                    pids.add(pid)
+                            except ValueError:
+                                pass
         except (FileNotFoundError, subprocess.TimeoutExpired):
             pass
 

@@ -270,6 +270,24 @@ def test_find_gateway_pids_falls_back_to_pid_file_when_process_scan_fails(monkey
     assert gateway.find_gateway_pids() == [321]
 
 
+def test_get_service_pids_parses_launchctl_plist_output(monkeypatch):
+    monkeypatch.setattr(gateway, "supports_systemd_services", lambda: False)
+    monkeypatch.setattr(gateway, "is_macos", lambda: True)
+    monkeypatch.setattr(gateway, "get_launchd_label", lambda: "ai.hermes.gateway-ceo-hermes")
+
+    def fake_run(cmd, **kwargs):
+        assert cmd == ["launchctl", "list", "ai.hermes.gateway-ceo-hermes"]
+        return SimpleNamespace(
+            returncode=0,
+            stdout='''{\n\t"Label" = "ai.hermes.gateway-ceo-hermes";\n\t"PID" = 1594;\n};\n''',
+            stderr="",
+        )
+
+    monkeypatch.setattr(gateway.subprocess, "run", fake_run)
+
+    assert gateway._get_service_pids() == {1594}
+
+
 # ---------------------------------------------------------------------------
 # _wait_for_gateway_exit
 # ---------------------------------------------------------------------------
