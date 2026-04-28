@@ -42,9 +42,11 @@ def clone_honcho_for_profile(profile_name: str) -> bool:
     # Clone settings from default block, override identity fields
     new_block = {}
     for key in ("recallMode", "writeFrequency", "sessionStrategy",
-                "sessionPeerPrefix", "contextTokens", "dialecticReasoningLevel",
-                "dialecticDynamic", "dialecticMaxChars", "messageMaxChars",
-                "dialecticMaxInputChars", "saveMessages", "observation"):
+                "sessionPeerPrefix", "contextTokens", "contextCadence",
+                "injectionFrequency", "dialecticCadence", "dialecticReasoningLevel",
+                "dialecticDynamic", "dialecticDepth", "dialecticDepthLevels",
+                "dialecticMaxChars", "messageMaxChars", "dialecticMaxInputChars",
+                "saveMessages", "observation"):
         val = default_block.get(key)
         if val is not None:
             new_block[key] = val
@@ -108,9 +110,10 @@ def cmd_enable(args) -> None:
     if not block.get("aiPeer"):
         default_block = cfg.get("hosts", {}).get(HOST, {})
         for key in ("recallMode", "writeFrequency", "sessionStrategy",
-                    "contextTokens", "dialecticReasoningLevel", "dialecticDynamic",
-                    "dialecticMaxChars", "messageMaxChars", "dialecticMaxInputChars",
-                    "saveMessages", "observation"):
+                    "contextTokens", "contextCadence", "injectionFrequency",
+                    "dialecticCadence", "dialecticReasoningLevel", "dialecticDynamic",
+                    "dialecticDepth", "dialecticDepthLevels", "dialecticMaxChars",
+                    "messageMaxChars", "dialecticMaxInputChars", "saveMessages", "observation"):
             val = default_block.get(key)
             if val is not None and key not in block:
                 block[key] = val
@@ -684,9 +687,13 @@ def cmd_status(args) -> None:
     print(f"  Session strat:  {hcfg.session_strategy}")
     print(f"  Recall mode:    {hcfg.recall_mode}")
     print(f"  Context budget: {hcfg.context_tokens or '(uncapped)'} tokens")
-    raw = getattr(hcfg, "raw", None) or {}
+    raw = getattr(hcfg, "effective_raw", None) or getattr(hcfg, "raw", None) or {}
+    context_cadence = raw.get("contextCadence") or 1
+    injection_frequency = raw.get("injectionFrequency") or "every-turn"
     dialectic_cadence = raw.get("dialecticCadence") or 1
-    print(f"  Dialectic cad:  every {dialectic_cadence} turn{'s' if dialectic_cadence != 1 else ''}")
+    print(f"  Context cad:   every {context_cadence} turn{'s' if context_cadence != 1 else ''}")
+    print(f"  Injection:     {injection_frequency}")
+    print(f"  Dialectic cad: every {dialectic_cadence} turn{'s' if dialectic_cadence != 1 else ''}")
     reasoning_cap = raw.get("reasoningLevelCap") or hcfg.reasoning_level_cap
     heuristic_on = "on" if hcfg.reasoning_heuristic else "off"
     print(f"  Reasoning:      base={hcfg.dialectic_reasoning_level}, cap={reasoning_cap}, heuristic={heuristic_on}")
@@ -965,35 +972,65 @@ def cmd_tokens(args) -> None:
 
     context = getattr(args, "context", None)
     dialectic = getattr(args, "dialectic", None)
+    context_cadence = getattr(args, "context_cadence", None)
+    injection_frequency = getattr(args, "injection_frequency", None)
+    dialectic_cadence = getattr(args, "dialectic_cadence", None)
 
-    if context is None and dialectic is None:
+    if (
+        context is None
+        and dialectic is None
+        and context_cadence is None
+        and injection_frequency is None
+        and dialectic_cadence is None
+    ):
         ctx_tokens = hermes.get("contextTokens") or cfg.get("contextTokens") or "(Honcho default)"
+        ctx_cadence = hermes.get("contextCadence") or cfg.get("contextCadence") or 1
+        inject_freq = hermes.get("injectionFrequency") or cfg.get("injectionFrequency") or "every-turn"
         d_chars = hermes.get("dialecticMaxChars") or cfg.get("dialecticMaxChars") or 600
         d_level = hermes.get("dialecticReasoningLevel") or cfg.get("dialecticReasoningLevel") or "low"
+        d_cadence = hermes.get("dialecticCadence") or cfg.get("dialecticCadence") or 1
         print("\nHoncho budgets\n" + "─" * 40)
         print()
-        print(f"  Context     {ctx_tokens} tokens")
+        print(f"  Context     {ctx_tokens} tokens, cadence: every {ctx_cadence} turn(s)")
+        print(f"  Injection   {inject_freq}")
         print("    Raw memory retrieval. Honcho returns stored facts/history about")
         print("    the user and session, injected directly into the system prompt.")
         print()
-        print(f"  Dialectic   {d_chars} chars, reasoning: {d_level}")
+        print(f"  Dialectic   {d_chars} chars, reasoning: {d_level}, cadence: every {d_cadence} turn(s)")
         print("    AI-to-AI inference. Hermes asks Honcho's AI peer a question")
         print("    (e.g. \"what were we working on?\") and Honcho runs its own model")
         print("    to synthesize an answer. Used for first-turn session continuity.")
         print("    Level controls how much reasoning Honcho spends on the answer.")
-        print("\n  Set with: hermes honcho tokens [--context N] [--dialectic N]\n")
+        print("\n  Set with: hermes honcho tokens [--context N] [--dialectic N] [--context-cadence N] [--injection-frequency every-turn|first-turn] [--dialectic-cadence N]\n")
         return
 
     host = _host_key()
     label = f"[{host}] " if host != "hermes" else ""
+    host_cfg = cfg.setdefault("hosts", {}).setdefault(host, {})
     changed = False
     if context is not None:
-        cfg.setdefault("hosts", {}).setdefault(host, {})["contextTokens"] = context
+        host_cfg["contextTokens"] = context
         print(f"  {label}context tokens -> {context}")
         changed = True
     if dialectic is not None:
-        cfg.setdefault("hosts", {}).setdefault(host, {})["dialecticMaxChars"] = dialectic
+        host_cfg["dialecticMaxChars"] = dialectic
         print(f"  {label}dialectic cap  -> {dialectic} chars")
+        changed = True
+    if context_cadence is not None:
+        if context_cadence < 1:
+            raise SystemExit("--context-cadence must be >= 1")
+        host_cfg["contextCadence"] = context_cadence
+        print(f"  {label}context cadence -> every {context_cadence} turn(s)")
+        changed = True
+    if injection_frequency is not None:
+        host_cfg["injectionFrequency"] = injection_frequency
+        print(f"  {label}injection frequency -> {injection_frequency}")
+        changed = True
+    if dialectic_cadence is not None:
+        if dialectic_cadence < 1:
+            raise SystemExit("--dialectic-cadence must be >= 1")
+        host_cfg["dialecticCadence"] = dialectic_cadence
+        print(f"  {label}dialectic cadence -> every {dialectic_cadence} turn(s)")
         changed = True
 
     if changed:
@@ -1425,6 +1462,18 @@ def register_cli(subparser) -> None:
     tokens_parser.add_argument(
         "--dialectic", type=int, metavar="N",
         help="Max chars of dialectic result to inject into system prompt",
+    )
+    tokens_parser.add_argument(
+        "--context-cadence", type=int, metavar="N",
+        help="Minimum turns between Honcho context refreshes",
+    )
+    tokens_parser.add_argument(
+        "--injection-frequency", choices=("every-turn", "first-turn"),
+        help="Inject Honcho context every turn or only the first turn",
+    )
+    tokens_parser.add_argument(
+        "--dialectic-cadence", type=int, metavar="N",
+        help="Minimum turns between Honcho dialectic refreshes",
     )
 
     identity_parser = subs.add_parser(

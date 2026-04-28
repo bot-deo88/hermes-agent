@@ -305,6 +305,10 @@ class HonchoClientConfig:
     sessions: dict[str, str] = field(default_factory=dict)
     # Raw global config for anything else consumers need
     raw: dict[str, Any] = field(default_factory=dict)
+    # Host-resolved view for fields that historically lived in raw config.
+    # Host block values win over root values. This lets consumers read one
+    # mapping without accidentally ignoring profile-specific overrides.
+    effective_raw: dict[str, Any] = field(default_factory=dict)
     # True when Honcho was explicitly configured for this host (hosts.hermes
     # block exists or enabled was set explicitly), vs auto-enabled from a
     # stray HONCHO_API_KEY env var.
@@ -405,6 +409,9 @@ class HonchoClientConfig:
         else:
             # Not explicitly set anywhere -> auto-enable if API key or base_url exists
             enabled = bool(api_key or base_url)
+
+        effective_raw = dict(raw)
+        effective_raw.update(host_block)
 
         # write_frequency: accept int or string
         raw_wf = (
@@ -529,6 +536,7 @@ class HonchoClientConfig:
             session_peer_prefix=session_peer_prefix,
             sessions=raw.get("sessions", {}),
             raw=raw,
+            effective_raw=effective_raw,
             explicitly_configured=_explicitly_configured,
         )
 
