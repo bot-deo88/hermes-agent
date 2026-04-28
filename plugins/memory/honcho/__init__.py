@@ -305,7 +305,7 @@ class HonchoMemoryProvider(MemoryProvider):
 
             # ----- B5: cost-awareness config -----
             try:
-                raw = cfg.raw or {}
+                raw = getattr(cfg, "effective_raw", None) or cfg.raw or {}
                 self._injection_frequency = raw.get("injectionFrequency", "every-turn")
                 self._context_cadence = int(raw.get("contextCadence", 1))
                 # Backwards-compat: unset dialecticCadence falls back to 1

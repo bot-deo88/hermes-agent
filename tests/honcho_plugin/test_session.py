@@ -910,6 +910,16 @@ class TestDialecticCadenceDefaults:
         provider = self._make_provider(cfg_extra={"raw": {"dialecticCadence": 5}})
         assert provider._dialectic_cadence == 5
 
+    def test_host_effective_raw_overrides_root_raw(self):
+        """Host-resolved cost controls should win at provider initialization."""
+        provider = self._make_provider(cfg_extra={
+            "raw": {"dialecticCadence": 1, "contextCadence": 1, "injectionFrequency": "every-turn"},
+            "effective_raw": {"dialecticCadence": 5, "contextCadence": 3, "injectionFrequency": "first-turn"},
+        })
+        assert provider._dialectic_cadence == 5
+        assert provider._context_cadence == 3
+        assert provider._injection_frequency == "first-turn"
+
 
 class TestBaseContextSummary:
     """Base context injection should include session summary when available."""

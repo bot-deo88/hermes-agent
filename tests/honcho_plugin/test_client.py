@@ -199,6 +199,28 @@ class TestFromGlobalConfig:
         config = HonchoClientConfig.from_global_config(config_path=config_file)
         assert config.context_tokens == 2000
 
+    def test_effective_raw_merges_host_over_root_for_cost_controls(self, tmp_path):
+        """Host block cost controls should be visible to runtime consumers."""
+        config_file = tmp_path / "config.json"
+        config_file.write_text(json.dumps({
+            "apiKey": "***",
+            "contextCadence": 1,
+            "dialecticCadence": 1,
+            "injectionFrequency": "every-turn",
+            "hosts": {
+                "hermes": {
+                    "contextCadence": 3,
+                    "dialecticCadence": 5,
+                    "injectionFrequency": "first-turn",
+                }
+            },
+        }))
+        config = HonchoClientConfig.from_global_config(config_path=config_file)
+        assert config.effective_raw["contextCadence"] == 3
+        assert config.effective_raw["dialecticCadence"] == 5
+        assert config.effective_raw["injectionFrequency"] == "first-turn"
+        assert config.raw["dialecticCadence"] == 1
+
     def test_recall_mode_from_config(self, tmp_path):
         """recallMode is read from config, host block wins."""
         config_file = tmp_path / "config.json"
