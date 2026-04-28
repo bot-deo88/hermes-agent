@@ -126,3 +126,57 @@ def test_codex_no_cache_fields(monkeypatch):
     agent = _make_agent(monkeypatch, "codex_responses", "openai-codex", resp)
     agent.run_conversation("hi")
     assert agent.context_compressor.last_prompt_tokens == 3000
+
+
+def test_post_compression_context_counter_includes_tool_schemas(monkeypatch):
+    """Post-compression status must match request-level accounting.
+
+    The preflight path includes tool schemas when deciding whether to compact.
+    After compaction, the status bar reads context_compressor.last_prompt_tokens;
+    that value must use the same estimator or TUI can show a deceptively low
+    context percentage immediately after compression.
+    """
+    from agent.model_metadata import (
+        estimate_messages_tokens_rough,
+        estimate_request_tokens_rough,
+        estimate_tokens_rough,
+    )
+
+    resp = lambda: SimpleNamespace(
+        choices=[SimpleNamespace(index=0, message=SimpleNamespace(
+            role="assistant", content="ok", tool_calls=None, reasoning_content=None,
+        ), finish_reason="stop")],
+        usage=SimpleNamespace(prompt_tokens=5000, completion_tokens=100, total_tokens=5100),
+        model="gpt-4o",
+    )
+    agent = _make_agent(monkeypatch, "chat_completions", "openrouter", resp)
+    compressed = [
+        {"role": "user", "content": "keep the live request"},
+        {"role": "assistant", "content": "ok"},
+    ]
+    agent.tools = [{
+        "type": "function",
+        "function": {
+            "name": "huge_tool_schema",
+            "description": "x" * 40_000,
+            "parameters": {"type": "object", "properties": {}},
+        },
+    }]
+    monkeypatch.setattr(agent, "_build_system_prompt", lambda system_message=None: "system prompt")
+    monkeypatch.setattr(agent.context_compressor, "compress", lambda *a, **k: list(compressed))
+
+    result, new_system_prompt = agent._compress_context(
+        [{"role": "user", "content": "old"}, {"role": "assistant", "content": "old"}],
+        None,
+        approx_tokens=200_000,
+    )
+
+    expected = estimate_request_tokens_rough(
+        result,
+        system_prompt=new_system_prompt or "",
+        tools=agent.tools,
+    )
+    old_underestimate = estimate_tokens_rough(new_system_prompt) + estimate_messages_tokens_rough(result)
+
+    assert agent.context_compressor.last_prompt_tokens == expected
+    assert agent.context_compressor.last_prompt_tokens > old_underestimate
