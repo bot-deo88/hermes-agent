@@ -11,6 +11,17 @@ import pytest
 import hermes_cli.doctor as doctor_mod
 
 
+class _FakeHonchoConfig:
+    def __init__(self, **overrides):
+        self.enabled = True
+        self.recall_mode = "hybrid"
+        self.context_tokens = None
+        self.effective_raw = {}
+        self.raw = {}
+        for key, value in overrides.items():
+            setattr(self, key, value)
+
+
 def _setup_doctor_env(monkeypatch, tmp_path, venv_name="venv"):
     """Create a minimal HERMES_HOME + PROJECT_ROOT for doctor tests."""
     home = tmp_path / ".hermes"
@@ -273,3 +284,47 @@ class TestDoctorCommandInstallation:
 
         out = _run_doctor(fix=False)
         assert "Command Installation" not in out
+
+
+class TestDoctorContextHygieneWarnings:
+    def test_honcho_costly_mode_warning_is_specific_and_non_secret(self):
+        cfg = _FakeHonchoConfig(
+            recall_mode="hybrid",
+            context_tokens=None,
+            effective_raw={
+                "injectionFrequency": "every-turn",
+                "dialecticCadence": 1,
+                "apiKey": "token-value-should-not-leak",
+                "baseUrl": "https://private.example.test",
+            },
+        )
+
+        warnings = doctor_mod._honcho_context_hygiene_warnings(cfg)
+
+        joined = "\n".join(warnings)
+        assert "Honcho costly context mode" in joined
+        assert "auto-injection mode=hybrid" in joined
+        assert "contextTokens=uncapped" in joined
+        assert "injectionFrequency=every-turn" in joined
+        assert "dialecticCadence=1" in joined
+        assert "report-only" in joined
+        assert "token-value" not in joined
+        assert "private.example" not in joined
+
+    def test_honcho_safe_mode_does_not_warn(self):
+        cfg = _FakeHonchoConfig(
+            recall_mode="tools",
+            context_tokens=1200,
+            effective_raw={"injectionFrequency": "first-turn", "dialecticCadence": 3},
+        )
+
+        assert doctor_mod._honcho_context_hygiene_warnings(cfg) == []
+
+    def test_wal_warning_names_storage_hygiene_not_prompt_injection(self):
+        message, detail, issue = doctor_mod._format_wal_hygiene_warning(64 * 1024 * 1024)
+
+        combined = " ".join((message, detail, issue)).lower()
+        assert "storage/session hygiene" in combined
+        assert "checkpoint" in combined
+        assert "not direct prompt injection" in combined
+        assert "not database corruption" in combined

@@ -132,6 +132,68 @@ def check_info(text: str):
     print(f"    {color('→', Colors.CYAN)} {text}")
 
 
+_HONCHO_CONTEXT_TOKEN_WARNING_THRESHOLD = 2000
+
+
+def _honcho_context_hygiene_warnings(hcfg) -> list[str]:
+    """Return report-only warnings for Honcho configurations likely to bloat startup context.
+
+    The warning intentionally reports only mode/budget/cadence fields. It never
+    includes API keys, base URLs, peer names, or workspace identifiers.
+    """
+    if not getattr(hcfg, "enabled", False):
+        return []
+
+    recall_mode = str(getattr(hcfg, "recall_mode", "") or "").strip().lower()
+    if recall_mode not in {"hybrid", "context"}:
+        return []
+
+    raw = getattr(hcfg, "effective_raw", None) or getattr(hcfg, "raw", None) or {}
+    context_tokens = getattr(hcfg, "context_tokens", None)
+    injection_frequency = str(raw.get("injectionFrequency", "every-turn") or "every-turn")
+    try:
+        dialectic_cadence = int(raw.get("dialecticCadence", 1))
+    except (TypeError, ValueError):
+        dialectic_cadence = 1
+
+    signals: list[str] = [f"auto-injection mode={recall_mode}"]
+    if context_tokens is None:
+        signals.append("contextTokens=uncapped")
+    elif context_tokens > _HONCHO_CONTEXT_TOKEN_WARNING_THRESHOLD:
+        signals.append(
+            f"contextTokens={context_tokens} > {_HONCHO_CONTEXT_TOKEN_WARNING_THRESHOLD}"
+        )
+    if injection_frequency == "every-turn":
+        signals.append("injectionFrequency=every-turn")
+    if dialectic_cadence <= 1:
+        signals.append("dialecticCadence=1")
+
+    # Only warn when at least one cost driver beyond the auto-injection mode is present.
+    if len(signals) == 1:
+        return []
+
+    return [
+        "Honcho costly context mode — "
+        + ", ".join(signals)
+        + "; report-only: consider tools/first-turn mode or a smaller contextTokens cap."
+    ]
+
+
+def _format_wal_hygiene_warning(wal_size: int) -> tuple[str, str, str]:
+    wal_mb = wal_size // (1024 * 1024)
+    message = f"WAL file is large ({wal_mb} MB)"
+    detail = (
+        "(storage/session hygiene: checkpoint backlog; "
+        "not direct prompt injection, not database corruption)"
+    )
+    issue = (
+        "Large WAL file — storage/session hygiene checkpoint backlog; "
+        "not direct prompt injection or database corruption. "
+        "Run 'hermes doctor --fix' to checkpoint"
+    )
+    return message, detail, issue
+
+
 def _check_gateway_service_linger(issues: list[str]) -> None:
     """Warn when a systemd user gateway service will stop after logout."""
     try:
@@ -624,10 +686,8 @@ def run_doctor(args):
         try:
             wal_size = wal_path.stat().st_size
             if wal_size > 50 * 1024 * 1024:  # 50 MB
-                check_warn(
-                    f"WAL file is large ({wal_size // (1024*1024)} MB)",
-                    "(may indicate missed checkpoints)"
-                )
+                wal_message, wal_detail, wal_issue = _format_wal_hygiene_warning(wal_size)
+                check_warn(wal_message, wal_detail)
                 if should_fix:
                     import sqlite3
                     conn = sqlite3.connect(str(state_db_path))
@@ -637,7 +697,7 @@ def run_doctor(args):
                     check_ok(f"WAL checkpoint performed ({wal_size // 1024}K → {new_size // 1024}K)")
                     fixed_count += 1
                 else:
-                    issues.append("Large WAL file — run 'hermes doctor --fix' to checkpoint")
+                    issues.append(wal_issue)
             elif wal_size > 10 * 1024 * 1024:  # 10 MB
                 check_info(f"WAL file is {wal_size // (1024*1024)} MB (normal for active sessions)")
         except Exception:
@@ -1157,6 +1217,9 @@ def run_doctor(args):
             else:
                 from plugins.memory.honcho.client import get_honcho_client, reset_honcho_client
                 reset_honcho_client()
+                for warning in _honcho_context_hygiene_warnings(hcfg):
+                    check_warn(warning)
+                    issues.append(warning)
                 try:
                     get_honcho_client(hcfg)
                     check_ok(
