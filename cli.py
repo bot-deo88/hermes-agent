@@ -9896,9 +9896,11 @@ class HermesCLI:
             pass  # Tips are non-critical — never break startup
 
         # Curator — kick off a background skill-maintenance pass on startup
-        # if the schedule says we're due.  Runs in a daemon thread so it
-        # never blocks the interactive loop.  Best-effort; any failure is
-        # swallowed to avoid breaking session startup.
+        # if the schedule says we're due.  The guarded entrypoint returns
+        # early when HERMES_DISABLE_AUTO_CURATOR=1/true/yes/on so no-mutation
+        # sessions can launch CLI without starting Curator.  Runs in a daemon
+        # thread so it never blocks the interactive loop.  Best-effort; any
+        # failure is swallowed to avoid breaking session startup.
         try:
             from agent.curator import maybe_run_curator
             maybe_run_curator(

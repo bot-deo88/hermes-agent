@@ -1586,6 +1586,14 @@ def maybe_run_curator(
     """Best-effort: run a curator pass if all gates pass. Returns the result
     dict if a pass was started, else None. Never raises."""
     try:
+        if (os.getenv("HERMES_DISABLE_AUTO_CURATOR") or "").strip().lower() in {
+            "1",
+            "true",
+            "yes",
+            "on",
+        }:
+            logger.debug("Auto Curator disabled by HERMES_DISABLE_AUTO_CURATOR")
+            return None
         if not should_run_now():
             return None
         # Idle gating: only enforce when the caller provided a measurement.

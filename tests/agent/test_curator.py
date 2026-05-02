@@ -421,6 +421,54 @@ def test_maybe_run_curator_respects_disabled(curator_env, monkeypatch):
     assert result is None
 
 
+def test_maybe_run_curator_respects_disable_auto_curator_env(curator_env, monkeypatch):
+    c = curator_env["curator"]
+    monkeypatch.setenv("HERMES_DISABLE_AUTO_CURATOR", "1")
+    calls = {"should_run_now": 0}
+
+    def should_run_now():
+        calls["should_run_now"] += 1
+        return True
+
+    monkeypatch.setattr(c, "should_run_now", should_run_now)
+    result = c.maybe_run_curator(idle_for_seconds=float("inf"))
+
+    assert result is None
+    assert calls["should_run_now"] == 0
+
+
+def test_maybe_run_curator_disable_auto_curator_env_accepts_truthy_values(curator_env, monkeypatch):
+    c = curator_env["curator"]
+    monkeypatch.setenv("HERMES_DISABLE_AUTO_CURATOR", "true")
+    calls = {"review": 0}
+
+    monkeypatch.setattr(c, "should_run_now", lambda: True)
+
+    def review(*args, **kwargs):
+        calls["review"] += 1
+        return {"started_at": "never"}
+
+    monkeypatch.setattr(c, "run_curator_review", review)
+    result = c.maybe_run_curator(idle_for_seconds=float("inf"))
+
+    assert result is None
+    assert calls["review"] == 0
+
+
+def test_maybe_run_curator_disable_auto_curator_env_ignores_false(curator_env, monkeypatch):
+    c = curator_env["curator"]
+    skills_dir = curator_env["home"] / "skills"
+    _write_skill(skills_dir, "a")
+    long_ago = datetime.now(timezone.utc) - timedelta(hours=c.get_interval_hours() * 2)
+    c.save_state({"last_run_at": long_ago.isoformat(), "paused": False})
+    monkeypatch.setenv("HERMES_DISABLE_AUTO_CURATOR", "0")
+
+    result = c.maybe_run_curator(idle_for_seconds=float("inf"))
+
+    assert result is not None
+    assert "started_at" in result
+
+
 def test_maybe_run_curator_enforces_idle_gate(curator_env, monkeypatch):
     c = curator_env["curator"]
     monkeypatch.setattr(c, "_load_config", lambda: {"min_idle_hours": 2})
