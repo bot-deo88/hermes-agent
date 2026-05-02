@@ -68,17 +68,21 @@ def _cmd_status(args) -> int:
     print(f"  archive after:  {curator.get_archive_after_days()}d unused")
 
     rows = skill_usage.agent_created_report()
+    metadata_pins = skill_usage.pinned_metadata_names()
     if not rows:
         print("\nno agent-created skills")
+        if metadata_pins:
+            print(f"\npinned ({len(metadata_pins)}): {', '.join(metadata_pins)}")
         return 0
 
     by_state = {"active": [], "stale": [], "archived": []}
-    pinned = []
+    row_pins = []
     for r in rows:
         state_name = r.get("state", "active")
         by_state.setdefault(state_name, []).append(r)
         if r.get("pinned"):
-            pinned.append(r["name"])
+            row_pins.append(r["name"])
+    pinned = sorted(set(row_pins) | set(metadata_pins))
 
     print(f"\nagent-created skills: {len(rows)} total")
     for state_name in ("active", "stale", "archived"):

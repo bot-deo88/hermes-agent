@@ -183,6 +183,28 @@ def test_very_old_skill_gets_archived(curator_env):
     assert u.get_record("ancient")["state"] == "archived"
 
 
+def test_curator_status_displays_metadata_only_pins(curator_env, capsys):
+    """Status must show all pinned metadata without inflating active counts."""
+    u = curator_env["usage"]
+    skills_dir = curator_env["home"] / "skills"
+    _write_skill(skills_dir, "active-pin")
+
+    data = u.load_usage()
+    data["active-pin"] = u._empty_record()
+    data["active-pin"]["pinned"] = True
+    data["metadata-only-pin"] = u._empty_record()
+    data["metadata-only-pin"]["pinned"] = True
+    u.save_usage(data)
+
+    from hermes_cli import curator as curator_cli
+
+    assert curator_cli._cmd_status(object()) == 0
+    out = capsys.readouterr().out
+    assert "agent-created skills: 1 total" in out
+    assert "  active     1" in out
+    assert "pinned (2): active-pin, metadata-only-pin" in out
+
+
 def test_pinned_skill_is_never_touched(curator_env):
     c = curator_env["curator"]
     u = curator_env["usage"]

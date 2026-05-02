@@ -504,3 +504,16 @@ def agent_created_report() -> List[Dict[str, Any]]:
         row["activity_count"] = activity_count(row)
         rows.append(row)
     return rows
+
+
+def pinned_metadata_names() -> List[str]:
+    """Return every skill name marked pinned in usage metadata.
+
+    This intentionally reads the sidecar directly instead of filtering through
+    ``list_agent_created_skill_names()``. A pin is operator intent recorded in
+    Curator metadata; status displays must show that intent even when the skill
+    is not currently present in the active curator-managed row set.
+    """
+    data = load_usage()
+    names = [name for name, rec in data.items() if isinstance(rec, dict) and rec.get("pinned") is True]
+    return sorted(set(names))
