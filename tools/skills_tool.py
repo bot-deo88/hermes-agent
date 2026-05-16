@@ -102,6 +102,11 @@ _PLATFORM_MAP = {
 }
 _ENV_VAR_NAME_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 _EXCLUDED_SKILL_DIRS = frozenset((".git", ".github", ".hub", ".archive"))
+# Directories inside a skill bundle that contain supporting files, not
+# standalone legacy flat skills. A reference like references/morning-brief.md
+# must be loadable via skill_view("umbrella", "references/morning-brief.md"),
+# but must not collide with an active morning-brief/SKILL.md.
+_SUPPORT_FILE_DIRS = frozenset(("references", "templates", "scripts", "assets"))
 _REMOTE_ENV_BACKENDS = frozenset(
     {"docker", "singularity", "modal", "ssh", "daytona", "vercel_sandbox"}
 )
@@ -978,6 +983,26 @@ def skill_view(
             seen_md.add(key)
             candidates.append((sd, smd))
 
+        def _is_legacy_flat_skill_candidate(search_dir: Path, found_md: Path) -> bool:
+            """Return True when *found_md* can be treated as a legacy flat skill.
+
+            Recursive flat-name lookup exists for historical standalone skill
+            files. It must not treat support files inside active skills — or
+            archived support files — as standalone skills, otherwise files like
+            references/morning-brief.md shadow morning-brief/SKILL.md.
+            """
+            if found_md.name == "SKILL.md" or not found_md.is_file():
+                return False
+            try:
+                rel_parts = found_md.relative_to(search_dir).parts
+            except ValueError:
+                rel_parts = found_md.parts
+            if any(part in _EXCLUDED_SKILL_DIRS for part in rel_parts):
+                return False
+            if any(part in _SUPPORT_FILE_DIRS for part in rel_parts[:-1]):
+                return False
+            return True
+
         for search_dir in all_dirs:
             # Strategy 1: direct path (e.g., "mlops/axolotl" or bare "axolotl"
             # at the top of the dir).
@@ -1003,9 +1028,11 @@ def skill_view(
                 if found_skill_md.parent.name == name:
                     _record(found_skill_md.parent, found_skill_md)
 
-            # Strategy 3: legacy flat <name>.md files anywhere under the dir.
+            # Strategy 3: legacy flat <name>.md files. Support directories
+            # (references/templates/scripts/assets) and archive trees are not
+            # standalone skills and must not shadow active SKILL.md files.
             for found_md in search_dir.rglob(f"{name}.md"):
-                if found_md.name != "SKILL.md":
+                if _is_legacy_flat_skill_candidate(search_dir, found_md):
                     _record(None, found_md)
 
         if len(candidates) > 1:
